@@ -297,6 +297,18 @@ backend/*.db
 frontend/node_modules/
 frontend/dist/
 
+# Legacy WinForms application kept only as local reference
+.gitattributes
+BUS/
+DAL/
+DTO/
+GUI/
+Setup/
+QLTV.sln
+QLTV.sql
+README.md
+Báo cáo Quản lý thư viện.pdf
+
 # Visual Studio 6 workspace options file
 *.opt
 
