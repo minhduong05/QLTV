@@ -125,7 +125,7 @@ function StaffShell({ token, currentUser, onLogout }) {
     circulation: <CirculationPage {...pageProps} />,
     acquisitions: <AcquisitionsPage {...pageProps} />,
     reports: <ReportsPage {...pageProps} />,
-    admin: <AdminPage {...pageProps} />,
+    admin: <AdminPage {...pageProps} currentUser={currentUser} />,
   };
   return <div className="min-h-screen lg:grid lg:grid-cols-[16rem_1fr]">
     <aside className="bg-slate-950 p-5 text-slate-100">

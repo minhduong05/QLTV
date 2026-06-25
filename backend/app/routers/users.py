@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
 from app.dependencies import AdminUser, DbSession
-from app.models import User, UserRole
+from app.models import Acquisition, BorrowRequest, BorrowTicket, CardRequest, Loan, Payment, User, UserRole
 from app.schemas import UserCreate, UserOut, UserUpdate
 from app.security import hash_password
 
@@ -48,3 +48,35 @@ def update_user(user_id: int, payload: UserUpdate, db: DbSession, _: AdminUser):
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(user_id: int, db: DbSession, current_admin: AdminUser):
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy người dùng")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Không thể tự xóa tài khoản đang đăng nhập")
+    if user.role == UserRole.ADMIN and user.is_active:
+        admins = db.scalar(select(func.count()).select_from(User).where(User.role == UserRole.ADMIN, User.is_active.is_(True))) or 0
+        if admins <= 1:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Không thể xóa admin đang hoạt động cuối cùng")
+
+    reference_checks = [
+        ("yêu cầu cấp thẻ", select(func.count()).select_from(CardRequest).where(CardRequest.user_id == user.id)),
+        ("quyết định cấp thẻ", select(func.count()).select_from(CardRequest).where(CardRequest.decided_by_id == user.id)),
+        ("phiếu mượn", select(func.count()).select_from(Loan).where(Loan.loaned_by_id == user.id)),
+        ("quyết định phiếu mượn online", select(func.count()).select_from(BorrowTicket).where(BorrowTicket.decided_by_id == user.id)),
+        ("yêu cầu mượn cũ", select(func.count()).select_from(BorrowRequest).where(BorrowRequest.decided_by_id == user.id)),
+        ("phiếu nhập", select(func.count()).select_from(Acquisition).where(Acquisition.created_by_id == user.id)),
+        ("phiếu thu", select(func.count()).select_from(Payment).where(Payment.received_by_id == user.id)),
+    ]
+    used_in = [label for label, statement in reference_checks if (db.scalar(statement) or 0) > 0]
+    if used_in:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Tài khoản đã phát sinh nghiệp vụ ({', '.join(used_in)}). Hãy khóa tài khoản thay vì xóa để giữ lịch sử.",
+        )
+
+    db.delete(user)
+    db.commit()
