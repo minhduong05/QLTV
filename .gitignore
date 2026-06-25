@@ -288,6 +288,15 @@ node_modules/
 # Visual Studio 6 build log
 *.plg
 
+# Library web application
+backend/.env
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+frontend/node_modules/
+frontend/dist/
+
 # Visual Studio 6 workspace options file
 *.opt
 
