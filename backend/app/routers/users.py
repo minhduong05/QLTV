@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import func, select
 
@@ -76,6 +78,14 @@ def delete_user(user_id: int, db: DbSession, current_admin: AdminUser):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Tài khoản đã phát sinh nghiệp vụ ({', '.join(used_in)}). Hãy khóa tài khoản thay vì xóa để giữ lịch sử.",
+        )
+
+    created_at = user.created_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    one_day_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    if created_at > one_day_ago:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tài khoản chưa đủ 1 ngày không phát sinh nghiệp vụ. Hãy khóa tài khoản nếu cần ngưng sử dụng ngay.",
         )
 
     db.delete(user)

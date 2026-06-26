@@ -49,7 +49,7 @@ export function AdminPage({ token, currentUser }) {
   }
 
   function deleteUser(user) {
-    const confirmed = window.confirm(`Xóa tài khoản "${user.email}" khỏi hệ thống? Tài khoản đã phát sinh nghiệp vụ sẽ không được xóa để giữ lịch sử.`);
+    const confirmed = window.confirm(`Xóa tài khoản "${user.email}" khỏi hệ thống? Chỉ tài khoản đã qua 1 ngày và chưa phát sinh nghiệp vụ mới được xóa. Tài khoản đã phát sinh nghiệp vụ nên khóa để giữ lịch sử.`);
     if (!confirmed) return null;
     return runAction(
       () => request(`/users/${user.id}`, { token, method: "DELETE" }),
