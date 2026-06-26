@@ -41,7 +41,7 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
   const [selectedQuantities, setSelectedQuantities] = useState({});
   const [editingTicketId, setEditingTicketId] = useState(null);
   const [search, setSearch] = useState("");
-  const [cardForm, setCardForm] = useState({ full_name: currentUser.full_name, phone: "", date_of_birth: "", address: "", reader_type_id: "" });
+  const [cardForm, setCardForm] = useState({ full_name: currentUser.full_name, cccd: "", phone: "", date_of_birth: "", address: "", reader_type_id: "" });
   const [ticketNote, setTicketNote] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -111,7 +111,7 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
         body: { ...cardForm, reader_type_id: cardForm.reader_type_id ? Number(cardForm.reader_type_id) : null },
       });
       setMessage("Đã gửi yêu cầu cấp thẻ đọc. Thủ thư sẽ kiểm tra hồ sơ và duyệt online.");
-      setCardForm({ full_name: currentUser.full_name, phone: "", date_of_birth: "", address: "", reader_type_id: "" });
+      setCardForm({ full_name: currentUser.full_name, cccd: "", phone: "", date_of_birth: "", address: "", reader_type_id: "" });
       await load();
     } catch (err) {
       setError(err.message);
@@ -255,6 +255,7 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
             {cardRequest?.status === "rejected" && <p className="mt-2 text-sm text-rose-600">Yêu cầu trước bị từ chối{cardRequest.note ? `: ${cardRequest.note}` : "."}</p>}
             <form onSubmit={registerCard} className="mt-4 grid gap-3">
               <input placeholder="Họ và tên trên thẻ" value={cardForm.full_name} onChange={(event) => setCardForm({ ...cardForm, full_name: event.target.value })} required />
+              <input placeholder="CCCD/CMND" value={cardForm.cccd} onChange={(event) => setCardForm({ ...cardForm, cccd: event.target.value })} minLength="9" maxLength="20" required />
               <input value={currentUser.email} disabled title="Email lấy theo tài khoản đăng nhập" />
               <input placeholder="Số điện thoại" value={cardForm.phone} onChange={(event) => setCardForm({ ...cardForm, phone: event.target.value })} minLength="8" required />
               <label className="grid gap-1 text-sm">Ngày sinh<input type="date" value={cardForm.date_of_birth} onChange={(event) => setCardForm({ ...cardForm, date_of_birth: event.target.value })} required /></label>
@@ -271,6 +272,7 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
             <h2 className="font-semibold">Thông tin thẻ</h2>
             <dl className="mt-4 grid gap-3 text-sm">
               <div><dt className="text-slate-500">Họ tên</dt><dd className="font-medium">{profile?.full_name ?? cardRequest?.full_name ?? currentUser.full_name}</dd></div>
+              <div><dt className="text-slate-500">CCCD</dt><dd className="font-medium">{profile?.cccd ?? cardRequest?.cccd ?? "Chưa có"}</dd></div>
               <div><dt className="text-slate-500">Email</dt><dd className="font-medium">{profile?.email ?? currentUser.email}</dd></div>
               <div><dt className="text-slate-500">Số điện thoại</dt><dd className="font-medium">{profile?.phone || cardRequest?.phone || "Chưa có"}</dd></div>
               <div><dt className="text-slate-500">Địa chỉ</dt><dd className="font-medium">{profile?.address || cardRequest?.address || "Chưa có"}</dd></div>

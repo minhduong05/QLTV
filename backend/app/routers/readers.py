@@ -77,6 +77,11 @@ def request_my_reader_card(payload: CardRequestCreate, db: DbSession, user: Curr
         raise HTTPException(status_code=403, detail="Chỉ tài khoản bạn đọc được đăng ký thẻ đọc")
     if db.scalar(select(Reader).where(Reader.email == user.email)):
         raise HTTPException(status_code=409, detail="Tài khoản này đã có thẻ đọc")
+    cccd = payload.cccd.strip()
+    if db.scalar(select(Reader).where(Reader.cccd == cccd)):
+        raise HTTPException(status_code=409, detail="CCCD này đã có thẻ bạn đọc")
+    if db.scalar(select(CardRequest).where(CardRequest.cccd == cccd, CardRequest.status == CardRequestStatus.PENDING)):
+        raise HTTPException(status_code=409, detail="CCCD này đang có yêu cầu cấp thẻ chờ duyệt")
     pending = db.scalar(select(CardRequest).where(CardRequest.user_id == user.id, CardRequest.status == CardRequestStatus.PENDING))
     if pending:
         raise HTTPException(status_code=409, detail="Bạn đã có yêu cầu cấp thẻ đang chờ thủ thư duyệt")
@@ -86,6 +91,7 @@ def request_my_reader_card(payload: CardRequestCreate, db: DbSession, user: Curr
     request_item = CardRequest(
         user_id=user.id,
         full_name=payload.full_name.strip(),
+        cccd=cccd,
         email=user.email,
         phone=payload.phone.strip(),
         address=payload.address.strip(),
@@ -148,12 +154,15 @@ def approve_card_request(request_id: int, payload: CardRequestDecision, db: DbSe
         raise HTTPException(status_code=409, detail="Yêu cầu này đã được xử lý")
     if db.scalar(select(Reader).where(Reader.email == request_item.email)):
         raise HTTPException(status_code=409, detail="Email này đã có thẻ bạn đọc")
+    if request_item.cccd and db.scalar(select(Reader).where(Reader.cccd == request_item.cccd)):
+        raise HTTPException(status_code=409, detail="CCCD này đã có thẻ bạn đọc")
 
     ensure_default_settings(db)
     validity_months = get_int_setting(db, "card_validity_months", 12)
     reader = Reader(
         card_number=_next_card_number(db),
         full_name=request_item.full_name,
+        cccd=request_item.cccd,
         email=request_item.email,
         phone=request_item.phone,
         address=request_item.address,
@@ -214,11 +223,15 @@ def create_reader(payload: ReaderCreate, db: DbSession, _: StaffUser):
     card_number = payload.card_number.strip()
     if db.scalar(select(Reader).where(Reader.card_number == card_number)):
         raise HTTPException(status_code=409, detail="Mã thẻ đã tồn tại")
+    cccd = payload.cccd.strip()
+    if db.scalar(select(Reader).where(Reader.cccd == cccd)):
+        raise HTTPException(status_code=409, detail="CCCD này đã có thẻ bạn đọc")
     if payload.reader_type_id and not db.get(ReaderType, payload.reader_type_id):
         raise HTTPException(status_code=404, detail="Không tìm thấy loại bạn đọc")
     reader_data = payload.model_dump(exclude_none=True)
     reader_data["card_number"] = card_number
     reader_data["full_name"] = payload.full_name.strip()
+    reader_data["cccd"] = cccd
     reader = Reader(**reader_data)
     db.add(reader)
     db.commit()
@@ -234,6 +247,10 @@ def update_reader(reader_id: int, payload: ReaderUpdate, db: DbSession, _: Staff
     if payload.reader_type_id and not db.get(ReaderType, payload.reader_type_id):
         raise HTTPException(status_code=404, detail="Không tìm thấy loại bạn đọc")
     for key, value in payload.model_dump(exclude_unset=True).items():
+        if key == "cccd" and value:
+            value = value.strip()
+            if db.scalar(select(Reader).where(Reader.cccd == value, Reader.id != reader_id)):
+                raise HTTPException(status_code=409, detail="CCCD này đã có thẻ bạn đọc")
         setattr(reader, key, value.strip() if key == "full_name" and value else value)
     db.commit()
     db.refresh(reader)

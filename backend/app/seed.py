@@ -82,6 +82,7 @@ def ensure_demo_data(db: Session) -> None:
         reader = Reader(
             card_number="DG-0001",
             full_name="Nguyễn Bạn Đọc",
+            cccd="001205000001",
             email=DEMO_ACCOUNTS["reader"]["email"],
             phone="0901234567",
             address="Số 1 Đại Cồ Việt, Hà Nội",
@@ -91,6 +92,8 @@ def ensure_demo_data(db: Session) -> None:
         )
         db.add(reader)
         db.flush()
+    else:
+        reader.cccd = reader.cccd or "001205000001"
 
     categories = {
         "technology": _get_or_create_lookup(db, Category, "Công nghệ thông tin"),

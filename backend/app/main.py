@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine
@@ -21,9 +22,26 @@ for router in (auth.router, users.router, catalog.router, readers.router, loans.
     app.include_router(router, prefix=settings.api_prefix)
 
 
+def ensure_sqlite_schema_compatibility() -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        reader_columns = {column["name"] for column in inspector.get_columns("readers")}
+        if "cccd" not in reader_columns:
+            connection.execute(text("ALTER TABLE readers ADD COLUMN cccd VARCHAR(20)"))
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_readers_cccd ON readers (cccd)"))
+
+        request_columns = {column["name"] for column in inspector.get_columns("card_requests")}
+        if "cccd" not in request_columns:
+            connection.execute(text("ALTER TABLE card_requests ADD COLUMN cccd VARCHAR(20)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_card_requests_cccd ON card_requests (cccd)"))
+
+
 @app.on_event("startup")
 def initialize_database() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_sqlite_schema_compatibility()
     with SessionLocal() as db:
         ensure_default_settings(db)
         ensure_demo_data(db)

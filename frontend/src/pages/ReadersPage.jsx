@@ -5,6 +5,7 @@ import { Card, ErrorBox, PageTitle, Table } from "../components/ui";
 const initialReader = {
   card_number: "",
   full_name: "",
+  cccd: "",
   email: "",
   phone: "",
   address: "",
@@ -27,6 +28,7 @@ export function ReadersPage({ token }) {
   const [form, setForm] = useState(initialReader);
   const [payment, setPayment] = useState({ reader_id: "", amount: "", note: "" });
   const [readerTypeName, setReaderTypeName] = useState("");
+  const [selectedCardRequest, setSelectedCardRequest] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -47,6 +49,7 @@ export function ReadersPage({ token }) {
   const recentCardRequests = cardRequests.filter((item) => item.status !== "pending").slice(0, 8);
   const debtReaders = readers.filter((reader) => reader.balance > 0);
   const selectedDebtReader = useMemo(() => readers.find((reader) => reader.id === Number(payment.reader_id)), [readers, payment.reader_id]);
+  const selectedCardRequestType = types.find((item) => item.id === selectedCardRequest?.reader_type_id);
 
   async function runAction(action, successMessage) {
     setError("");
@@ -99,6 +102,7 @@ export function ReadersPage({ token }) {
   }
 
   function approveCardRequest(requestId) {
+    setSelectedCardRequest(null);
     return runAction(
       () => request(`/readers/card-requests/${requestId}/approve`, { token, method: "POST", body: { note: "Hồ sơ hợp lệ, cấp thẻ online." } }),
       "Đã duyệt yêu cầu và tạo thẻ bạn đọc."
@@ -108,6 +112,7 @@ export function ReadersPage({ token }) {
   function rejectCardRequest(requestId) {
     const note = window.prompt("Lý do từ chối", "Hồ sơ chưa đủ thông tin, vui lòng cập nhật và gửi lại.");
     if (note === null) return null;
+    setSelectedCardRequest(null);
     return runAction(
       () => request(`/readers/card-requests/${requestId}/reject`, { token, method: "POST", body: { note } }),
       "Đã từ chối yêu cầu cấp thẻ."
@@ -128,10 +133,10 @@ export function ReadersPage({ token }) {
               <div>
                 <p className="font-medium">{item.full_name}</p>
                 <p className="text-sm text-slate-500">{item.email} · {item.phone} · {new Date(item.requested_at).toLocaleDateString("vi-VN")}</p>
-                <p className="text-sm text-slate-500">Ngày sinh: {item.date_of_birth} · Địa chỉ: {item.address}</p>
+                <p className="text-sm text-slate-500">CCCD: {item.cccd || "Chưa có"} · Ngày sinh: {item.date_of_birth}</p>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => approveCardRequest(item.id)} className="bg-indigo-600 text-sm text-white">Duyệt cấp thẻ</button>
+                <button onClick={() => setSelectedCardRequest(item)} className="bg-slate-800 text-sm text-white">Xem chi tiết</button>
                 <button onClick={() => rejectCardRequest(item.id)} className="border border-slate-300 text-sm hover:bg-slate-50">Từ chối</button>
               </div>
             </div>)}
@@ -139,11 +144,34 @@ export function ReadersPage({ token }) {
           </div>
         </Card>
 
+        {selectedCardRequest && <Card>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Chi tiết yêu cầu cấp thẻ</h2>
+              <p className="mt-1 text-sm text-slate-500">Kiểm tra hồ sơ trước khi duyệt tạo thẻ bạn đọc.</p>
+            </div>
+            <button onClick={() => setSelectedCardRequest(null)} className="border border-slate-300 text-sm hover:bg-slate-50">Đóng</button>
+          </div>
+          <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+            <div><dt className="text-slate-500">Họ tên</dt><dd className="font-medium">{selectedCardRequest.full_name}</dd></div>
+            <div><dt className="text-slate-500">CCCD</dt><dd className="font-medium">{selectedCardRequest.cccd || "Chưa có"}</dd></div>
+            <div><dt className="text-slate-500">Email</dt><dd className="font-medium">{selectedCardRequest.email}</dd></div>
+            <div><dt className="text-slate-500">Số điện thoại</dt><dd className="font-medium">{selectedCardRequest.phone}</dd></div>
+            <div><dt className="text-slate-500">Ngày sinh</dt><dd className="font-medium">{selectedCardRequest.date_of_birth}</dd></div>
+            <div><dt className="text-slate-500">Loại bạn đọc</dt><dd className="font-medium">{selectedCardRequestType?.name || "Chưa chọn"}</dd></div>
+            <div className="md:col-span-2"><dt className="text-slate-500">Địa chỉ</dt><dd className="font-medium">{selectedCardRequest.address}</dd></div>
+          </dl>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button onClick={() => approveCardRequest(selectedCardRequest.id)} className="bg-indigo-600 text-sm text-white">Duyệt cấp thẻ</button>
+            <button onClick={() => rejectCardRequest(selectedCardRequest.id)} className="border border-slate-300 text-sm hover:bg-slate-50">Từ chối</button>
+          </div>
+        </Card>}
+
         <Table>
           <thead className="bg-slate-50 text-slate-500"><tr><th className="p-4">Bạn đọc</th><th className="p-4">Liên hệ</th><th className="p-4">Hạn thẻ</th><th className="p-4">Công nợ</th></tr></thead>
           <tbody>
             {readers.map((reader) => <tr key={reader.id} className="border-t">
-              <td className="p-4 font-medium">{reader.full_name}<div className="text-xs font-normal text-slate-500">{reader.card_number}</div></td>
+              <td className="p-4 font-medium">{reader.full_name}<div className="text-xs font-normal text-slate-500">{reader.card_number}{reader.cccd ? ` · CCCD ${reader.cccd}` : ""}</div></td>
               <td className="p-4">{reader.email || reader.phone || "—"}<div className="text-xs text-slate-500">{reader.address || ""}</div></td>
               <td className="p-4">{reader.expires_at}</td>
               <td className={reader.balance ? "p-4 font-semibold text-rose-600" : "p-4 text-emerald-600"}>{reader.balance.toLocaleString("vi-VN")} đ</td>
@@ -159,6 +187,7 @@ export function ReadersPage({ token }) {
           <form onSubmit={createReader} className="mt-4 grid gap-3">
             <input placeholder="Mã thẻ" value={form.card_number} onChange={(event) => setForm({ ...form, card_number: event.target.value })} required />
             <input placeholder="Họ và tên" value={form.full_name} onChange={(event) => setForm({ ...form, full_name: event.target.value })} required />
+            <input placeholder="CCCD/CMND" value={form.cccd} onChange={(event) => setForm({ ...form, cccd: event.target.value })} minLength="9" maxLength="20" required />
             <input type="email" placeholder="Email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
             <input placeholder="Số điện thoại" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
             <label className="text-sm">Ngày sinh<input className="mt-1 w-full" type="date" value={form.date_of_birth} onChange={(event) => setForm({ ...form, date_of_birth: event.target.value })} /></label>

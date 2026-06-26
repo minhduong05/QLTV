@@ -37,6 +37,7 @@ class ReaderRegisterRequest(BootstrapRequest):
 
 class ReaderCardRegisterRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=160)
+    cccd: str = Field(min_length=9, max_length=20)
     phone: str = Field(min_length=8, max_length=30)
     address: str = Field(min_length=5, max_length=300)
     date_of_birth: date
@@ -55,6 +56,7 @@ class CardRequestOut(APIModel):
     id: int
     user_id: int
     full_name: str
+    cccd: str | None
     email: EmailStr
     phone: str
     address: str
@@ -148,6 +150,7 @@ class BookTitleOut(APIModel):
 class ReaderCreate(BaseModel):
     card_number: str = Field(min_length=1, max_length=50)
     full_name: str = Field(min_length=2, max_length=160)
+    cccd: str = Field(min_length=9, max_length=20)
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=30)
     address: str | None = Field(default=None, max_length=300)
@@ -158,6 +161,7 @@ class ReaderCreate(BaseModel):
 
 class ReaderUpdate(BaseModel):
     full_name: str | None = Field(default=None, min_length=2, max_length=160)
+    cccd: str | None = Field(default=None, min_length=9, max_length=20)
     email: EmailStr | None = None
     phone: str | None = Field(default=None, max_length=30)
     address: str | None = Field(default=None, max_length=300)
@@ -171,6 +175,7 @@ class ReaderOut(APIModel):
     id: int
     card_number: str
     full_name: str
+    cccd: str | None
     email: EmailStr | None
     phone: str | None
     address: str | None
