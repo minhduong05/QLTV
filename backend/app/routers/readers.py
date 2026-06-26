@@ -85,7 +85,7 @@ def request_my_reader_card(payload: CardRequestCreate, db: DbSession, user: Curr
 
     request_item = CardRequest(
         user_id=user.id,
-        full_name=user.full_name,
+        full_name=payload.full_name.strip(),
         email=user.email,
         phone=payload.phone.strip(),
         address=payload.address.strip(),

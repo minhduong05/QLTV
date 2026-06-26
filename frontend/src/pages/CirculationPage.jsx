@@ -4,6 +4,7 @@ import { Card, ErrorBox, PageTitle } from "../components/ui";
 
 const ticketStatusLabels = {
   pending_review: "Chờ kiểm tra",
+  reviewed: "Đã kiểm tra, chờ duyệt",
   changes_requested: "Chờ bạn đọc phản hồi",
   approved_waiting_pickup: "Đã duyệt, chờ lấy",
   borrowed: "Đã mượn",
@@ -13,8 +14,8 @@ const ticketStatusLabels = {
 
 const itemStatusLabels = {
   pending: "Chờ kiểm tra",
-  available: "Có bản sao",
-  unavailable: "Hết bản sao",
+  available: "Đủ bản sao",
+  unavailable: "Thiếu bản sao",
   reserved: "Đã giữ chỗ",
   skipped: "Bỏ qua",
 };
@@ -45,8 +46,8 @@ export function CirculationPage({ token }) {
   useEffect(() => { load().catch((err) => setError(err.message)); }, [token]);
 
   const copies = useMemo(() => books.flatMap((book) => book.copies.filter((copy) => copy.status === "available").map((copy) => ({ ...copy, bookTitle: book.title }))), [books]);
-  const activeTickets = tickets.filter((item) => ["pending_review", "changes_requested", "approved_waiting_pickup"].includes(item.status));
-  const recentTickets = tickets.filter((item) => !["pending_review", "changes_requested", "approved_waiting_pickup"].includes(item.status)).slice(0, 8);
+  const activeTickets = tickets.filter((item) => ["pending_review", "reviewed", "changes_requested", "approved_waiting_pickup"].includes(item.status));
+  const recentTickets = tickets.filter((item) => !["pending_review", "reviewed", "changes_requested", "approved_waiting_pickup"].includes(item.status)).slice(0, 8);
 
   async function runAction(action, successMessage) {
     setError("");
@@ -73,16 +74,16 @@ export function CirculationPage({ token }) {
   function reviewTicket(ticketId) {
     return runAction(
       () => request(`/loans/tickets/${ticketId}/review`, { token, method: "POST", body: {} }),
-      (ticket) => ticket.status === "approved_waiting_pickup"
-        ? `Phiếu #${ticket.id} đủ sách và đã được duyệt, chờ bạn đọc đến lấy.`
-        : `Phiếu #${ticket.id} thiếu bản sao, đã gửi phản hồi để bạn đọc chọn sửa hoặc mượn phần còn sẵn.`
+      (ticket) => ticket.status === "reviewed"
+        ? `Phiếu #${ticket.id} đã được kiểm tra: đủ số lượng, chờ thủ thư duyệt giữ chỗ.`
+        : `Phiếu #${ticket.id} thiếu bản sao, đã gửi phản hồi để bạn đọc sửa hoặc mượn phần còn sẵn.`
     );
   }
 
-  function approveAvailable(ticketId) {
+  function approveTicket(ticketId) {
     return runAction(
-      () => request(`/loans/tickets/${ticketId}/approve-available`, { token, method: "POST", body: { note: "Thủ thư duyệt các đầu sách còn bản sao." } }),
-      (ticket) => `Đã duyệt phiếu #${ticket.id} với các đầu sách còn bản sao, chờ bạn đọc đến lấy.`
+      () => request(`/loans/tickets/${ticketId}/approve-available`, { token, method: "POST", body: { note: "Thủ thư duyệt sau khi kiểm tra chi tiết phiếu." } }),
+      (ticket) => `Đã duyệt giữ chỗ phiếu #${ticket.id}, chờ bạn đọc đến lấy sách.`
     );
   }
 
@@ -115,7 +116,7 @@ export function CirculationPage({ token }) {
   }
 
   return <>
-    <PageTitle title="Mượn, trả và gia hạn" description="Xử lý phiếu mượn online, lập phiếu trực tiếp tại quầy, xác nhận lấy sách, trả sách và gia hạn." />
+    <PageTitle title="Mượn, trả và gia hạn" description="Kiểm tra chi tiết phiếu online, duyệt giữ chỗ, xác nhận lấy sách, trả sách và gia hạn." />
     <ErrorBox message={error} />
     {message && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
     <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
@@ -131,16 +132,18 @@ export function CirculationPage({ token }) {
                   {ticket.staff_note && <p className="mt-2 rounded bg-slate-50 p-2 text-sm text-slate-600">{ticket.staff_note}</p>}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {ticket.status === "pending_review" && <button onClick={() => reviewTicket(ticket.id)} className="bg-indigo-600 text-sm text-white">Kiểm tra</button>}
-                  {["pending_review", "changes_requested"].includes(ticket.status) && <button onClick={() => approveAvailable(ticket.id)} className="border border-indigo-200 text-sm text-indigo-700 hover:bg-indigo-50">Duyệt phần có sẵn</button>}
+                  {ticket.status === "pending_review" && <button onClick={() => reviewTicket(ticket.id)} className="bg-slate-800 text-sm text-white">Kiểm tra chi tiết</button>}
+                  {ticket.status === "reviewed" && <button onClick={() => approveTicket(ticket.id)} className="bg-indigo-600 text-sm text-white">Duyệt giữ chỗ</button>}
+                  {ticket.status === "changes_requested" && <button onClick={() => approveTicket(ticket.id)} className="border border-indigo-200 text-sm text-indigo-700 hover:bg-indigo-50">Duyệt phần còn sẵn</button>}
                   {ticket.status === "approved_waiting_pickup" && <button onClick={() => pickupTicket(ticket.id)} className="bg-emerald-600 text-sm text-white">Xác nhận đã lấy</button>}
                   {ticket.status !== "approved_waiting_pickup" && <button onClick={() => rejectTicket(ticket.id)} className="border border-slate-300 text-sm hover:bg-slate-50">Từ chối</button>}
                 </div>
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-2">
                 {ticket.items.map((item) => <div key={item.id} className="rounded border border-slate-200 p-3 text-sm">
-                  <p className="font-medium">{item.title}</p>
-                  <p className="text-slate-500">{itemStatusLabels[item.status] ?? item.status} · còn {item.available_copies} bản sao{item.reserved_barcode ? ` · giữ ${item.reserved_barcode}` : ""}</p>
+                  <p className="font-medium">{item.title} × {item.requested_quantity}</p>
+                  <p className="text-slate-500">{itemStatusLabels[item.status] ?? item.status} · còn {item.available_copies} bản sao{item.approved_quantity ? ` · duyệt ${item.approved_quantity}` : ""}</p>
+                  {item.reserved_barcodes?.length > 0 && <p className="text-slate-500">Giữ chỗ: {item.reserved_barcodes.join(", ")}</p>}
                   {item.unavailable_reason && <p className="mt-1 text-rose-600">{item.unavailable_reason}</p>}
                 </div>)}
               </div>
@@ -178,7 +181,7 @@ export function CirculationPage({ token }) {
             <select multiple className="h-52" value={copyIds} onChange={(event) => setCopyIds(Array.from(event.target.selectedOptions, (option) => option.value))} required>
               {copies.map((copy) => <option key={copy.id} value={copy.id}>{copy.barcode} · {copy.bookTitle}</option>)}
             </select>
-            <p className="text-xs text-slate-500">Giữ Ctrl/Cmd để chọn nhiều cuốn.</p>
+            <p className="text-xs text-slate-500">Mượn trực tiếp chọn từng bản sao vật lý cụ thể. Giữ Ctrl/Cmd để chọn nhiều cuốn.</p>
             <button className="bg-indigo-600 text-white">Xác nhận mượn</button>
           </form>
         </Card>

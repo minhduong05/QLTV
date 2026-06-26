@@ -43,6 +43,7 @@ class CardRequestStatus(str, enum.Enum):
 
 class BorrowTicketStatus(str, enum.Enum):
     PENDING_REVIEW = "pending_review"
+    REVIEWED = "reviewed"
     CHANGES_REQUESTED = "changes_requested"
     APPROVED_WAITING_PICKUP = "approved_waiting_pickup"
     BORROWED = "borrowed"
@@ -128,6 +129,7 @@ class BookCopy(Base):
     condition_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     book_title: Mapped[BookTitle] = relationship(back_populates="copies")
     loan_items: Mapped[list["LoanItem"]] = relationship(back_populates="book_copy")
+    ticket_reservations: Mapped[list["BorrowTicketReservation"]] = relationship(back_populates="book_copy")
 
 
 class ReaderType(Base):
@@ -250,6 +252,16 @@ class BorrowTicketItem(Base):
     ticket: Mapped[BorrowTicket] = relationship(back_populates="items")
     book_title: Mapped[BookTitle] = relationship(back_populates="borrow_ticket_items")
     reserved_copy: Mapped[BookCopy | None] = relationship()
+    reservations: Mapped[list["BorrowTicketReservation"]] = relationship(back_populates="item", cascade="all, delete-orphan")
+
+
+class BorrowTicketReservation(Base):
+    __tablename__ = "borrow_ticket_reservations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_item_id: Mapped[int] = mapped_column(ForeignKey("borrow_ticket_items.id", ondelete="CASCADE"), index=True)
+    book_copy_id: Mapped[int] = mapped_column(ForeignKey("book_copies.id"), index=True)
+    item: Mapped[BorrowTicketItem] = relationship(back_populates="reservations")
+    book_copy: Mapped[BookCopy] = relationship(back_populates="ticket_reservations")
 
 
 class Supplier(Base):

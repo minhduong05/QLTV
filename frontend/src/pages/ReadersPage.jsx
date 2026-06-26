@@ -1,8 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { request } from "../api";
 import { Card, ErrorBox, PageTitle, Table } from "../components/ui";
 
-const initialReader = { card_number: "", full_name: "", email: "", phone: "", expires_at: "" };
+const initialReader = {
+  card_number: "",
+  full_name: "",
+  email: "",
+  phone: "",
+  address: "",
+  date_of_birth: "",
+  reader_type_id: "",
+  expires_at: "",
+};
 
 const cardRequestLabels = {
   pending: "Chờ duyệt",
@@ -34,6 +43,11 @@ export function ReadersPage({ token }) {
 
   useEffect(() => { load().catch((err) => setError(err.message)); }, [token]);
 
+  const pendingCardRequests = cardRequests.filter((item) => item.status === "pending");
+  const recentCardRequests = cardRequests.filter((item) => item.status !== "pending").slice(0, 8);
+  const debtReaders = readers.filter((reader) => reader.balance > 0);
+  const selectedDebtReader = useMemo(() => readers.find((reader) => reader.id === Number(payment.reader_id)), [readers, payment.reader_id]);
+
   async function runAction(action, successMessage) {
     setError("");
     setMessage("");
@@ -49,7 +63,18 @@ export function ReadersPage({ token }) {
   async function createReader(event) {
     event.preventDefault();
     await runAction(
-      () => request("/readers", { token, method: "POST", body: { ...form, email: form.email || null, phone: form.phone || null, reader_type_id: form.reader_type_id ? Number(form.reader_type_id) : null } }),
+      () => request("/readers", {
+        token,
+        method: "POST",
+        body: {
+          ...form,
+          email: form.email || null,
+          phone: form.phone || null,
+          address: form.address || null,
+          date_of_birth: form.date_of_birth || null,
+          reader_type_id: form.reader_type_id ? Number(form.reader_type_id) : null,
+        },
+      }),
       "Đã tạo thẻ bạn đọc trực tiếp."
     );
     setForm(initialReader);
@@ -68,7 +93,7 @@ export function ReadersPage({ token }) {
     event.preventDefault();
     await runAction(
       () => request("/readers/payments", { token, method: "POST", body: { reader_id: Number(payment.reader_id), amount: Number(payment.amount), note: payment.note || null } }),
-      "Đã lập phiếu thu tiền phạt."
+      "Đã lập phiếu thu. Công nợ bạn đọc đã được giảm tương ứng."
     );
     setPayment({ reader_id: "", amount: "", note: "" });
   }
@@ -81,29 +106,29 @@ export function ReadersPage({ token }) {
   }
 
   function rejectCardRequest(requestId) {
+    const note = window.prompt("Lý do từ chối", "Hồ sơ chưa đủ thông tin, vui lòng cập nhật và gửi lại.");
+    if (note === null) return null;
     return runAction(
-      () => request(`/readers/card-requests/${requestId}/reject`, { token, method: "POST", body: { note: "Hồ sơ chưa đủ thông tin, vui lòng cập nhật và gửi lại." } }),
+      () => request(`/readers/card-requests/${requestId}/reject`, { token, method: "POST", body: { note } }),
       "Đã từ chối yêu cầu cấp thẻ."
     );
   }
 
-  const pendingCardRequests = cardRequests.filter((item) => item.status === "pending");
-  const recentCardRequests = cardRequests.filter((item) => item.status !== "pending").slice(0, 8);
-
   return <>
-    <PageTitle title="Bạn đọc và thu tiền" description="Quản lý thẻ thư viện, duyệt yêu cầu cấp thẻ online, hạn thẻ và công nợ quá hạn." />
+    <PageTitle title="Bạn đọc, cấp thẻ và thu phạt" description="Duyệt thẻ đọc online, tạo thẻ tại quầy, theo dõi công nợ và lập phiếu thu." />
     <ErrorBox message={error} />
     {message && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
-    <div className="grid gap-6 xl:grid-cols-[1fr_21rem]">
+
+    <div className="grid gap-6 xl:grid-cols-[1fr_23rem]">
       <div className="grid gap-4">
         <Card>
-          <h2 className="font-semibold">Yêu cầu cấp thẻ online</h2>
+          <h2 className="font-semibold">Duyệt yêu cầu cấp thẻ online</h2>
           <div className="mt-4 divide-y">
             {pendingCardRequests.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div>
                 <p className="font-medium">{item.full_name}</p>
                 <p className="text-sm text-slate-500">{item.email} · {item.phone} · {new Date(item.requested_at).toLocaleDateString("vi-VN")}</p>
-                <p className="text-sm text-slate-500">{item.address}</p>
+                <p className="text-sm text-slate-500">Ngày sinh: {item.date_of_birth} · Địa chỉ: {item.address}</p>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => approveCardRequest(item.id)} className="bg-indigo-600 text-sm text-white">Duyệt cấp thẻ</button>
@@ -119,7 +144,7 @@ export function ReadersPage({ token }) {
           <tbody>
             {readers.map((reader) => <tr key={reader.id} className="border-t">
               <td className="p-4 font-medium">{reader.full_name}<div className="text-xs font-normal text-slate-500">{reader.card_number}</div></td>
-              <td className="p-4">{reader.email || reader.phone || "—"}</td>
+              <td className="p-4">{reader.email || reader.phone || "—"}<div className="text-xs text-slate-500">{reader.address || ""}</div></td>
               <td className="p-4">{reader.expires_at}</td>
               <td className={reader.balance ? "p-4 font-semibold text-rose-600" : "p-4 text-emerald-600"}>{reader.balance.toLocaleString("vi-VN")} đ</td>
             </tr>)}
@@ -136,7 +161,9 @@ export function ReadersPage({ token }) {
             <input placeholder="Họ và tên" value={form.full_name} onChange={(event) => setForm({ ...form, full_name: event.target.value })} required />
             <input type="email" placeholder="Email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
             <input placeholder="Số điện thoại" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
-            <select value={form.reader_type_id || ""} onChange={(event) => setForm({ ...form, reader_type_id: event.target.value })}>
+            <label className="text-sm">Ngày sinh<input className="mt-1 w-full" type="date" value={form.date_of_birth} onChange={(event) => setForm({ ...form, date_of_birth: event.target.value })} /></label>
+            <input placeholder="Địa chỉ" value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} />
+            <select value={form.reader_type_id} onChange={(event) => setForm({ ...form, reader_type_id: event.target.value })}>
               <option value="">Loại bạn đọc</option>
               {types.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
@@ -146,23 +173,28 @@ export function ReadersPage({ token }) {
         </Card>
 
         <Card>
-          <h2 className="font-semibold">Loại bạn đọc</h2>
-          <form onSubmit={createReaderType} className="mt-4 grid gap-3">
-            <input placeholder="Ví dụ: Sinh viên, Giảng viên" value={readerTypeName} onChange={(event) => setReaderTypeName(event.target.value)} required />
-            <button className="bg-slate-800 text-white">Thêm loại</button>
+          <h2 className="font-semibold">Thu tiền phạt / công nợ</h2>
+          <p className="mt-2 text-sm text-slate-500">Công nợ chỉ phát sinh khi nhận trả sách quá hạn. Phiếu thu ở đây chỉ ghi nhận số tiền bạn đọc đã nộp và trừ vào công nợ.</p>
+          <form onSubmit={collectPayment} className="mt-4 grid gap-3">
+            <select value={payment.reader_id} onChange={(event) => setPayment({ ...payment, reader_id: event.target.value, amount: "" })} required>
+              <option value="">Chọn bạn đọc đang có công nợ</option>
+              {debtReaders.map((reader) => <option key={reader.id} value={reader.id}>{reader.card_number} · {reader.full_name} ({reader.balance.toLocaleString("vi-VN")} đ)</option>)}
+            </select>
+            {selectedDebtReader && <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">
+              Công nợ hiện tại: <b>{selectedDebtReader.balance.toLocaleString("vi-VN")} đ</b>
+              <button type="button" onClick={() => setPayment({ ...payment, amount: String(selectedDebtReader.balance) })} className="ml-3 border border-rose-200 text-xs text-rose-700 hover:bg-white">Thu toàn bộ</button>
+            </div>}
+            <input type="number" min="1" max={selectedDebtReader?.balance || undefined} placeholder="Số tiền thu" value={payment.amount} onChange={(event) => setPayment({ ...payment, amount: event.target.value })} required />
+            <input placeholder="Ghi chú phiếu thu" value={payment.note} onChange={(event) => setPayment({ ...payment, note: event.target.value })} />
+            <button disabled={!selectedDebtReader} className={selectedDebtReader ? "bg-emerald-600 text-white" : "border border-slate-300 text-slate-400"}>Lập phiếu thu</button>
           </form>
         </Card>
 
         <Card>
-          <h2 className="font-semibold">Thu tiền phạt</h2>
-          <form onSubmit={collectPayment} className="mt-4 grid gap-3">
-            <select value={payment.reader_id} onChange={(event) => setPayment({ ...payment, reader_id: event.target.value })} required>
-              <option value="">Chọn bạn đọc</option>
-              {readers.filter((reader) => reader.balance > 0).map((reader) => <option key={reader.id} value={reader.id}>{reader.card_number} · {reader.full_name} ({reader.balance.toLocaleString("vi-VN")} đ)</option>)}
-            </select>
-            <input type="number" min="1" placeholder="Số tiền thu" value={payment.amount} onChange={(event) => setPayment({ ...payment, amount: event.target.value })} required />
-            <input placeholder="Ghi chú" value={payment.note} onChange={(event) => setPayment({ ...payment, note: event.target.value })} />
-            <button className="bg-emerald-600 text-white">Lập phiếu thu</button>
+          <h2 className="font-semibold">Loại bạn đọc</h2>
+          <form onSubmit={createReaderType} className="mt-4 grid gap-3">
+            <input placeholder="Ví dụ: Sinh viên, Giảng viên" value={readerTypeName} onChange={(event) => setReaderTypeName(event.target.value)} required />
+            <button className="bg-slate-800 text-white">Thêm loại</button>
           </form>
         </Card>
 

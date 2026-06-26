@@ -4,6 +4,7 @@ import { Card, ErrorBox, PageTitle, Stat, Table } from "../components/ui";
 
 const ticketStatusLabels = {
   pending_review: "Chờ thủ thư kiểm tra",
+  reviewed: "Đã kiểm tra, chờ duyệt giữ chỗ",
   changes_requested: "Cần bạn đọc phản hồi",
   approved_waiting_pickup: "Đã duyệt, chờ đến lấy",
   borrowed: "Đã mượn",
@@ -13,8 +14,8 @@ const ticketStatusLabels = {
 
 const itemStatusLabels = {
   pending: "Chờ kiểm tra",
-  available: "Có bản sao",
-  unavailable: "Hết bản sao",
+  available: "Đủ bản sao",
+  unavailable: "Thiếu bản sao",
   reserved: "Đã giữ chỗ",
   skipped: "Không mượn",
 };
@@ -33,20 +34,25 @@ function isCardValid(profile) {
 export function ReaderPortalPage({ token, currentUser, onLogout }) {
   const [profile, setProfile] = useState(null);
   const [cardRequest, setCardRequest] = useState(null);
+  const [readerTypes, setReaderTypes] = useState([]);
   const [loans, setLoans] = useState([]);
   const [tickets, setTickets] = useState([]);
   const [books, setBooks] = useState([]);
-  const [selectedBookIds, setSelectedBookIds] = useState([]);
+  const [selectedQuantities, setSelectedQuantities] = useState({});
   const [editingTicketId, setEditingTicketId] = useState(null);
   const [search, setSearch] = useState("");
-  const [cardForm, setCardForm] = useState({ phone: "", date_of_birth: "", address: "" });
+  const [cardForm, setCardForm] = useState({ full_name: currentUser.full_name, phone: "", date_of_birth: "", address: "", reader_type_id: "" });
   const [ticketNote, setTicketNote] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   async function load() {
-    const bookData = await request(`/catalog/books${search ? `?search=${encodeURIComponent(search)}` : ""}`);
+    const [bookData, typeData] = await Promise.all([
+      request(`/catalog/books${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+      request("/readers/types").catch(() => []),
+    ]);
     setBooks(bookData);
+    setReaderTypes(typeData);
 
     const [profileData, cardRequestData] = await Promise.all([
       request("/readers/me", { token }).catch(() => null),
@@ -78,9 +84,20 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
     available: book.copies.filter((copy) => copy.status === "available").length,
     reserved: book.copies.filter((copy) => copy.status === "reserved").length,
   })), [books]);
+  const selectedItems = Object.entries(selectedQuantities).filter(([, quantity]) => Number(quantity) > 0);
 
   function toggleBook(bookId) {
-    setSelectedBookIds((current) => current.includes(bookId) ? current.filter((id) => id !== bookId) : [...current, bookId]);
+    setSelectedQuantities((current) => {
+      const next = { ...current };
+      if (next[bookId]) delete next[bookId];
+      else next[bookId] = 1;
+      return next;
+    });
+  }
+
+  function setBookQuantity(bookId, quantity) {
+    const nextQuantity = Math.max(1, Math.min(10, Number(quantity) || 1));
+    setSelectedQuantities((current) => ({ ...current, [bookId]: nextQuantity }));
   }
 
   async function registerCard(event) {
@@ -88,9 +105,13 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
     setError("");
     setMessage("");
     try {
-      await request("/readers/me/card-request", { token, method: "POST", body: cardForm });
-      setMessage("Đã gửi yêu cầu cấp thẻ đọc. Thủ thư sẽ kiểm tra và duyệt online.");
-      setCardForm({ phone: "", date_of_birth: "", address: "" });
+      await request("/readers/me/card-request", {
+        token,
+        method: "POST",
+        body: { ...cardForm, reader_type_id: cardForm.reader_type_id ? Number(cardForm.reader_type_id) : null },
+      });
+      setMessage("Đã gửi yêu cầu cấp thẻ đọc. Thủ thư sẽ kiểm tra hồ sơ và duyệt online.");
+      setCardForm({ full_name: currentUser.full_name, phone: "", date_of_birth: "", address: "", reader_type_id: "" });
       await load();
     } catch (err) {
       setError(err.message);
@@ -103,22 +124,25 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
       setError("Bạn cần có thẻ đọc đang hoạt động và còn hạn trước khi đăng ký mượn sách.");
       return;
     }
-    if (!selectedBookIds.length) {
+    if (!selectedItems.length) {
       setError("Hãy chọn ít nhất một đầu sách để lập phiếu.");
       return;
     }
     setError("");
     setMessage("");
-    const body = { items: selectedBookIds.map((id) => ({ book_title_id: id, quantity: 1 })), note: ticketNote || null };
+    const body = {
+      items: selectedItems.map(([id, quantity]) => ({ book_title_id: Number(id), quantity: Number(quantity) })),
+      note: ticketNote || null,
+    };
     try {
       if (editingTicketId) {
         await request(`/loans/tickets/${editingTicketId}`, { token, method: "PUT", body });
         setMessage("Đã gửi lại phiếu sau khi điều chỉnh.");
       } else {
         await request("/loans/tickets", { token, method: "POST", body });
-        setMessage("Đã gửi phiếu đăng ký mượn. Thủ thư sẽ kiểm tra bản sao vật lý và phản hồi.");
+        setMessage("Đã gửi phiếu đăng ký mượn. Thủ thư sẽ kiểm tra số bản sao vật lý và phản hồi.");
       }
-      setSelectedBookIds([]);
+      setSelectedQuantities({});
       setEditingTicketId(null);
       setTicketNote("");
       await load();
@@ -152,8 +176,12 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
   }
 
   function editTicket(ticket) {
+    const nextQuantities = {};
+    ticket.items.filter((item) => item.status !== "unavailable").forEach((item) => {
+      nextQuantities[item.book_title_id] = item.requested_quantity;
+    });
     setEditingTicketId(ticket.id);
-    setSelectedBookIds(ticket.items.filter((item) => item.status !== "unavailable").map((item) => item.book_title_id));
+    setSelectedQuantities(nextQuantities);
     setTicketNote(ticket.note || "");
     window.scrollTo({ top: 240, behavior: "smooth" });
   }
@@ -176,7 +204,7 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
     </header>
 
     <main className="mx-auto max-w-7xl p-5 lg:p-8">
-      <PageTitle title="Tài khoản bạn đọc" description="Đăng ký thẻ đọc online, lập phiếu mượn nhiều sách và theo dõi trạng thái duyệt." />
+      <PageTitle title="Tài khoản bạn đọc" description="Đăng ký thẻ đọc online, lập phiếu mượn theo số lượng và theo dõi trạng thái duyệt." />
       <ErrorBox message={error} />
       {message && <p className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p>}
       {!profile && pendingCardRequest && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Yêu cầu cấp thẻ của bạn đang chờ thủ thư duyệt. Khi được duyệt, hệ thống sẽ tạo mã thẻ và mở quyền đăng ký mượn sách.</p>}
@@ -198,21 +226,22 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
           </div>
           <form onSubmit={submitTicket}>
             <Table>
-              <thead className="bg-slate-50 text-slate-500"><tr><th className="p-4">Chọn</th><th className="p-4">Đầu sách</th><th className="p-4">Phân loại</th><th className="p-4">Tình trạng</th></tr></thead>
+              <thead className="bg-slate-50 text-slate-500"><tr><th className="p-4">Chọn</th><th className="p-4">Đầu sách</th><th className="p-4">Phân loại</th><th className="p-4">Tình trạng</th><th className="p-4">Số lượng</th></tr></thead>
               <tbody>
                 {availableBooks.map((book) => <tr key={book.id} className="border-t">
-                  <td className="p-4"><input type="checkbox" checked={selectedBookIds.includes(book.id)} onChange={() => toggleBook(book.id)} disabled={!cardValid} /></td>
+                  <td className="p-4"><input type="checkbox" checked={Boolean(selectedQuantities[book.id])} onChange={() => toggleBook(book.id)} disabled={!cardValid} /></td>
                   <td className="p-4 font-medium">{book.title}<div className="text-xs font-normal text-slate-500">{book.isbn || "Không có ISBN"} · {book.authors.map((author) => author.name).join(", ") || "Chưa có tác giả"}</div></td>
                   <td className="p-4">{book.category.name}</td>
                   <td className={book.available ? "p-4 font-semibold text-emerald-700" : "p-4 text-rose-600"}>{book.available}/{book.copies.length} cuốn sẵn có{book.reserved ? ` · ${book.reserved} đang giữ chỗ` : ""}</td>
+                  <td className="p-4"><input className="w-20" type="number" min="1" max="10" disabled={!selectedQuantities[book.id]} value={selectedQuantities[book.id] || ""} onChange={(event) => setBookQuantity(book.id, event.target.value)} /></td>
                 </tr>)}
-                {!availableBooks.length && <tr><td colSpan="4" className="p-8 text-center text-slate-500">Không tìm thấy sách.</td></tr>}
+                {!availableBooks.length && <tr><td colSpan="5" className="p-8 text-center text-slate-500">Không tìm thấy sách.</td></tr>}
               </tbody>
             </Table>
             <Card className="mt-4">
               <div className="grid gap-3 md:grid-cols-[1fr_auto]">
                 <input placeholder="Ghi chú cho thủ thư nếu cần" value={ticketNote} onChange={(event) => setTicketNote(event.target.value)} />
-                <button disabled={!cardValid || !selectedBookIds.length} className={cardValid && selectedBookIds.length ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-400"}>
+                <button disabled={!cardValid || !selectedItems.length} className={cardValid && selectedItems.length ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-400"}>
                   {editingTicketId ? "Gửi lại phiếu" : "Gửi phiếu đăng ký mượn"}
                 </button>
               </div>
@@ -225,9 +254,15 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
             <h2 className="font-semibold">Gửi yêu cầu cấp thẻ đọc</h2>
             {cardRequest?.status === "rejected" && <p className="mt-2 text-sm text-rose-600">Yêu cầu trước bị từ chối{cardRequest.note ? `: ${cardRequest.note}` : "."}</p>}
             <form onSubmit={registerCard} className="mt-4 grid gap-3">
+              <input placeholder="Họ và tên trên thẻ" value={cardForm.full_name} onChange={(event) => setCardForm({ ...cardForm, full_name: event.target.value })} required />
+              <input value={currentUser.email} disabled title="Email lấy theo tài khoản đăng nhập" />
               <input placeholder="Số điện thoại" value={cardForm.phone} onChange={(event) => setCardForm({ ...cardForm, phone: event.target.value })} minLength="8" required />
               <label className="grid gap-1 text-sm">Ngày sinh<input type="date" value={cardForm.date_of_birth} onChange={(event) => setCardForm({ ...cardForm, date_of_birth: event.target.value })} required /></label>
               <input placeholder="Địa chỉ" value={cardForm.address} onChange={(event) => setCardForm({ ...cardForm, address: event.target.value })} minLength="5" required />
+              <select value={cardForm.reader_type_id} onChange={(event) => setCardForm({ ...cardForm, reader_type_id: event.target.value })}>
+                <option value="">Loại bạn đọc</option>
+                {readerTypes.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
               <button className="bg-indigo-600 text-white">Gửi yêu cầu cấp thẻ</button>
             </form>
           </Card>}
@@ -235,7 +270,7 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
           <Card>
             <h2 className="font-semibold">Thông tin thẻ</h2>
             <dl className="mt-4 grid gap-3 text-sm">
-              <div><dt className="text-slate-500">Họ tên</dt><dd className="font-medium">{profile?.full_name ?? currentUser.full_name}</dd></div>
+              <div><dt className="text-slate-500">Họ tên</dt><dd className="font-medium">{profile?.full_name ?? cardRequest?.full_name ?? currentUser.full_name}</dd></div>
               <div><dt className="text-slate-500">Email</dt><dd className="font-medium">{profile?.email ?? currentUser.email}</dd></div>
               <div><dt className="text-slate-500">Số điện thoại</dt><dd className="font-medium">{profile?.phone || cardRequest?.phone || "Chưa có"}</dd></div>
               <div><dt className="text-slate-500">Địa chỉ</dt><dd className="font-medium">{profile?.address || cardRequest?.address || "Chưa có"}</dd></div>
@@ -251,13 +286,13 @@ export function ReaderPortalPage({ token, currentUser, onLogout }) {
                     <p className="font-medium">Phiếu #{ticket.id} · {ticketStatusLabels[ticket.status] ?? ticket.status}</p>
                     <p className="text-slate-500">{new Date(ticket.requested_at).toLocaleDateString("vi-VN")}</p>
                   </div>
-                  {["pending_review", "changes_requested", "approved_waiting_pickup"].includes(ticket.status) && <button onClick={() => cancelTicket(ticket.id)} className="border border-slate-300 text-xs hover:bg-slate-50">Hủy</button>}
+                  {["pending_review", "reviewed", "changes_requested", "approved_waiting_pickup"].includes(ticket.status) && <button onClick={() => cancelTicket(ticket.id)} className="border border-slate-300 text-xs hover:bg-slate-50">Hủy</button>}
                 </div>
                 {ticket.staff_note && <p className="mt-2 rounded bg-slate-50 p-2 text-slate-600">{ticket.staff_note}</p>}
                 <ul className="mt-2 grid gap-1">
                   {ticket.items.map((item) => <li key={item.id} className="flex justify-between gap-2">
-                    <span>{item.title}</span>
-                    <span className={item.status === "unavailable" ? "text-rose-600" : "text-slate-500"}>{itemStatusLabels[item.status] ?? item.status}</span>
+                    <span>{item.title} × {item.requested_quantity}</span>
+                    <span className={item.status === "unavailable" ? "text-rose-600" : "text-slate-500"}>{itemStatusLabels[item.status] ?? item.status}{item.approved_quantity ? ` (${item.approved_quantity})` : ""}</span>
                   </li>)}
                 </ul>
                 {ticket.status === "changes_requested" && <div className="mt-3 flex flex-wrap gap-2">

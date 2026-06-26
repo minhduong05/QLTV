@@ -36,6 +36,7 @@ class ReaderRegisterRequest(BootstrapRequest):
 
 
 class ReaderCardRegisterRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=160)
     phone: str = Field(min_length=8, max_length=30)
     address: str = Field(min_length=5, max_length=300)
     date_of_birth: date
@@ -211,7 +212,7 @@ class BorrowRequestOut(BaseModel):
 
 class BorrowTicketItemCreate(BaseModel):
     book_title_id: int
-    quantity: int = Field(default=1, ge=1, le=1)
+    quantity: int = Field(default=1, ge=1, le=10)
 
 
 class BorrowTicketCreate(BaseModel):
@@ -238,6 +239,7 @@ class BorrowTicketItemOut(APIModel):
     unavailable_reason: str | None
     reserved_copy_id: int | None
     reserved_barcode: str | None
+    reserved_barcodes: list[str] = Field(default_factory=list)
 
 
 class BorrowTicketOut(APIModel):

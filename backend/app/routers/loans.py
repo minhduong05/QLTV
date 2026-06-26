@@ -12,6 +12,7 @@ from app.models import (
     BorrowTicket,
     BorrowTicketItem,
     BorrowTicketItemStatus,
+    BorrowTicketReservation,
     BorrowTicketStatus,
     CopyStatus,
     Loan,
@@ -39,6 +40,7 @@ def _ticket_query():
         selectinload(BorrowTicket.reader),
         selectinload(BorrowTicket.items).selectinload(BorrowTicketItem.book_title),
         selectinload(BorrowTicket.items).selectinload(BorrowTicketItem.reserved_copy),
+        selectinload(BorrowTicket.items).selectinload(BorrowTicketItem.reservations).selectinload(BorrowTicketReservation.book_copy),
     )
 
 
@@ -50,9 +52,9 @@ def _active_item_count(db: DbSession, reader_id: int) -> int:
 
 def _reserved_item_count(db: DbSession, reader_id: int, exclude_ticket_id: int | None = None) -> int:
     statement = (
-        select(func.count())
-        .select_from(BorrowTicketItem)
-        .join(BorrowTicket)
+        select(func.coalesce(func.sum(BorrowTicketItem.approved_quantity), 0))
+        .select_from(BorrowTicket)
+        .join(BorrowTicketItem)
         .where(BorrowTicket.reader_id == reader_id, BorrowTicket.status == BorrowTicketStatus.APPROVED_WAITING_PICKUP)
     )
     if exclude_ticket_id:
@@ -86,6 +88,10 @@ def _ensure_reader_can_borrow(db: DbSession, reader: Reader, requested_count: in
 
 def _release_reservations(ticket: BorrowTicket) -> None:
     for item in ticket.items:
+        for reservation in item.reservations:
+            if reservation.book_copy.status == CopyStatus.RESERVED:
+                reservation.book_copy.status = CopyStatus.AVAILABLE
+        item.reservations.clear()
         if item.reserved_copy and item.reserved_copy.status == CopyStatus.RESERVED:
             item.reserved_copy.status = CopyStatus.AVAILABLE
         item.reserved_copy = None
@@ -119,6 +125,7 @@ def _ticket_out(ticket: BorrowTicket, db: DbSession) -> BorrowTicketOut:
                 "unavailable_reason": item.unavailable_reason,
                 "reserved_copy_id": item.reserved_copy_id,
                 "reserved_barcode": item.reserved_copy.barcode if item.reserved_copy else None,
+                "reserved_barcodes": [reservation.book_copy.barcode for reservation in item.reservations],
             }
             for item in ticket.items
         ],
@@ -156,7 +163,7 @@ def _review_availability(ticket: BorrowTicket, db: DbSession) -> bool:
             item.unavailable_reason = None
         else:
             item.status = BorrowTicketItemStatus.UNAVAILABLE
-            item.unavailable_reason = "Hiện không còn bản sao vật lý sẵn sàng cho mượn"
+            item.unavailable_reason = f"Chỉ còn {available}/{item.requested_quantity} bản sao vật lý sẵn sàng"
             all_available = False
     return all_available
 
@@ -164,26 +171,34 @@ def _review_availability(ticket: BorrowTicket, db: DbSession) -> bool:
 def _reserve_available_items(ticket: BorrowTicket, db: DbSession, *, allow_partial: bool) -> int:
     reserved_count = 0
     for item in ticket.items:
-        copy = db.scalar(
+        copies = db.scalars(
             select(BookCopy)
             .where(BookCopy.book_title_id == item.book_title_id, BookCopy.status == CopyStatus.AVAILABLE)
             .order_by(BookCopy.id)
+            .limit(item.requested_quantity)
             .with_for_update()
-        )
-        if not copy:
+        ).all()
+        if len(copies) < item.requested_quantity and not allow_partial:
+            item.status = BorrowTicketItemStatus.UNAVAILABLE
+            item.approved_quantity = 0
+            item.unavailable_reason = f"Chỉ còn {len(copies)}/{item.requested_quantity} bản sao sẵn sàng"
+            raise HTTPException(status_code=409, detail=f"Đầu sách '{item.book_title.title}' không đủ số lượng yêu cầu")
+        if not copies:
             item.status = BorrowTicketItemStatus.SKIPPED if allow_partial else BorrowTicketItemStatus.UNAVAILABLE
             item.approved_quantity = 0
             item.unavailable_reason = "Không còn bản sao vật lý sẵn sàng cho mượn"
             if not allow_partial:
                 raise HTTPException(status_code=409, detail=f"Đầu sách '{item.book_title.title}' hiện không còn bản sao sẵn sàng")
             continue
-        copy.status = CopyStatus.RESERVED
-        item.reserved_copy = copy
-        item.reserved_copy_id = copy.id
-        item.approved_quantity = 1
+        for copy in copies:
+            copy.status = CopyStatus.RESERVED
+            item.reservations.append(BorrowTicketReservation(book_copy=copy))
+        item.reserved_copy = copies[0]
+        item.reserved_copy_id = copies[0].id
+        item.approved_quantity = len(copies)
         item.status = BorrowTicketItemStatus.RESERVED
-        item.unavailable_reason = None
-        reserved_count += 1
+        item.unavailable_reason = None if len(copies) == item.requested_quantity else f"Chỉ duyệt {len(copies)}/{item.requested_quantity} bản sao còn sẵn"
+        reserved_count += len(copies)
     return reserved_count
 
 
@@ -243,7 +258,8 @@ def my_borrow_tickets(db: DbSession, user: CurrentUser):
 def create_borrow_ticket(payload: BorrowTicketCreate, db: DbSession, user: CurrentUser):
     ensure_default_settings(db)
     reader = _reader_for_user(db, user)
-    _ensure_reader_can_borrow(db, reader, len(payload.items))
+    requested_count = sum(item.quantity for item in payload.items)
+    _ensure_reader_can_borrow(db, reader, requested_count)
     ticket = BorrowTicket(reader=reader, note=payload.note, status=BorrowTicketStatus.PENDING_REVIEW)
     db.add(ticket)
     _set_items_from_payload(db, ticket, payload)
@@ -260,7 +276,7 @@ def update_borrow_ticket(ticket_id: int, payload: BorrowTicketUpdate, db: DbSess
     if ticket.status != BorrowTicketStatus.CHANGES_REQUESTED:
         raise HTTPException(status_code=409, detail="Chỉ có thể sửa phiếu khi thủ thư yêu cầu điều chỉnh")
     _release_reservations(ticket)
-    _ensure_reader_can_borrow(db, reader, len(payload.items), exclude_ticket_id=ticket.id)
+    _ensure_reader_can_borrow(db, reader, sum(item.quantity for item in payload.items), exclude_ticket_id=ticket.id)
     ticket.note = payload.note
     ticket.staff_note = None
     ticket.status = BorrowTicketStatus.PENDING_REVIEW
@@ -277,18 +293,17 @@ def review_borrow_ticket(ticket_id: int, payload: BorrowTicketDecision, db: DbSe
     ticket = db.scalar(_ticket_query().where(BorrowTicket.id == ticket_id).with_for_update())
     if not ticket:
         raise HTTPException(status_code=404, detail="Không tìm thấy phiếu đăng ký mượn")
-    if ticket.status not in {BorrowTicketStatus.PENDING_REVIEW, BorrowTicketStatus.CHANGES_REQUESTED}:
+    if ticket.status not in {BorrowTicketStatus.PENDING_REVIEW, BorrowTicketStatus.REVIEWED, BorrowTicketStatus.CHANGES_REQUESTED}:
         raise HTTPException(status_code=409, detail="Phiếu này không còn ở trạng thái chờ kiểm tra")
     _release_reservations(ticket)
-    _ensure_reader_can_borrow(db, ticket.reader, len(ticket.items), exclude_ticket_id=ticket.id)
+    _ensure_reader_can_borrow(db, ticket.reader, sum(item.requested_quantity for item in ticket.items), exclude_ticket_id=ticket.id)
     all_available = _review_availability(ticket, db)
     ticket.staff_note = payload.note
     ticket.decided_at = datetime.now(timezone.utc).replace(tzinfo=None)
     ticket.decided_by_id = user.id
     if all_available:
-        _reserve_available_items(ticket, db, allow_partial=False)
-        ticket.status = BorrowTicketStatus.APPROVED_WAITING_PICKUP
-        ticket.staff_note = payload.note or "Tất cả sách đều sẵn sàng. Phiếu đã duyệt, chờ bạn đọc đến lấy sách."
+        ticket.status = BorrowTicketStatus.REVIEWED
+        ticket.staff_note = payload.note or "Tất cả đầu sách đủ số lượng. Thủ thư có thể xem chi tiết rồi bấm duyệt để giữ chỗ."
     else:
         ticket.status = BorrowTicketStatus.CHANGES_REQUESTED
         ticket.staff_note = payload.note or "Một số đầu sách không còn bản sao. Bạn đọc có thể sửa phiếu hoặc đồng ý mượn phần còn sẵn."
@@ -306,8 +321,8 @@ def approve_available_items(ticket_id: int, payload: BorrowTicketDecision, db: D
         raise HTTPException(status_code=403, detail="Bạn không có quyền xử lý phiếu này")
     if user.role == UserRole.READER and ticket.status != BorrowTicketStatus.CHANGES_REQUESTED:
         raise HTTPException(status_code=409, detail="Chỉ có thể xác nhận mượn phần còn sẵn sau khi thủ thư phản hồi")
-    if user.role != UserRole.READER and ticket.status not in {BorrowTicketStatus.PENDING_REVIEW, BorrowTicketStatus.CHANGES_REQUESTED}:
-        raise HTTPException(status_code=409, detail="Phiếu này không còn ở trạng thái có thể duyệt")
+    if user.role != UserRole.READER and ticket.status not in {BorrowTicketStatus.REVIEWED, BorrowTicketStatus.CHANGES_REQUESTED}:
+        raise HTTPException(status_code=409, detail="Cần kiểm tra/xem chi tiết phiếu trước khi duyệt")
     _release_reservations(ticket)
     reserved_count = _reserve_available_items(ticket, db, allow_partial=True)
     if reserved_count == 0:
@@ -362,8 +377,8 @@ def confirm_ticket_pickup(ticket_id: int, db: DbSession, user: StaffUser):
         raise HTTPException(status_code=404, detail="Không tìm thấy phiếu đăng ký mượn")
     if ticket.status != BorrowTicketStatus.APPROVED_WAITING_PICKUP:
         raise HTTPException(status_code=409, detail="Chỉ xác nhận lấy sách với phiếu đã duyệt")
-    reserved_items = [item for item in ticket.items if item.status == BorrowTicketItemStatus.RESERVED and item.reserved_copy]
-    if not reserved_items:
+    reservations = [reservation for item in ticket.items for reservation in item.reservations if item.status == BorrowTicketItemStatus.RESERVED]
+    if not reservations:
         raise HTTPException(status_code=409, detail="Phiếu chưa có cuốn sách nào được giữ chỗ")
     _ensure_reader_can_borrow(db, ticket.reader, 0, exclude_ticket_id=ticket.id)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -371,11 +386,11 @@ def confirm_ticket_pickup(ticket_id: int, db: DbSession, user: StaffUser):
     loan = Loan(reader=ticket.reader, loaned_by_id=user.id, due_at=now + timedelta(days=loan_days))
     db.add(loan)
     db.flush()
-    for item in reserved_items:
-        if item.reserved_copy.status != CopyStatus.RESERVED:
-            raise HTTPException(status_code=409, detail=f"Cuốn {item.reserved_copy.barcode} không còn ở trạng thái giữ chỗ")
-        item.reserved_copy.status = CopyStatus.ON_LOAN
-        db.add(LoanItem(loan=loan, book_copy=item.reserved_copy))
+    for reservation in reservations:
+        if reservation.book_copy.status != CopyStatus.RESERVED:
+            raise HTTPException(status_code=409, detail=f"Cuốn {reservation.book_copy.barcode} không còn ở trạng thái giữ chỗ")
+        reservation.book_copy.status = CopyStatus.ON_LOAN
+        db.add(LoanItem(loan=loan, book_copy=reservation.book_copy))
     ticket.status = BorrowTicketStatus.BORROWED
     ticket.loan_id = loan.id
     ticket.decided_at = now
