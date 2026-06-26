@@ -2,8 +2,6 @@
 
 Đây là phiên bản web của hệ thống quản lý thư viện, được xây dựng lại theo mô hình phân tầng để phục vụ các nghiệp vụ chính trong báo cáo phân tích thiết kế hệ thống thông tin và các nghiệp vụ mở rộng thường có trong thư viện thực tế.
 
-Repository cũ tham khảo là ứng dụng WinForms. README cũ đã được lưu lại tại `README-LEGACY-WINFORMS.md`. README này là tài liệu chính cho hệ thống web mới.
-
 ## 1. Công Nghệ Sử Dụng
 
 | Thành phần | Công nghệ |
@@ -145,8 +143,7 @@ QLTV/
 │  ├─ TONG_HOP_LUONG_TAC_NHAN_VA_USE_CASE.md
 │  ├─ KIEN_TRUC_VA_HUONG_DAN.md
 │  └─ CAP_NHAT_LOGIC_NGHIEP_VU.md
-├─ README.md
-└─ README-LEGACY-WINFORMS.md
+└─ README.md
 ```
 
 ## 5. Kiến Trúc Phân Tầng
